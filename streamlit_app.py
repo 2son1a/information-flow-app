@@ -506,7 +506,7 @@ def main():
             st.session_state.head_groups = convert_predefined_groups_to_head_groups(selected_model)
             st.session_state.input_text = get_default_text_for_model(selected_model)
             st.session_state.attention_data = None  # Reset attention data when switching models
-            st.experimental_rerun()
+
 
     # Backend status and sample data loading
     if not st.session_state.backend_available:
