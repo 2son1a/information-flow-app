@@ -94,8 +94,37 @@ def get_head_color(layer: int, head: int, head_groups: List[HeadGroup]) -> str:
     return '#3B82F6'
 
 class APIService:
-    def __init__(self, base_url: str = "http://localhost:8000"):
-        self.base_url = base_url
+    def __init__(self, base_url: str = None):
+        # If no base_url is provided, try to get it from environment variable or use local IP
+        if base_url is None:
+            import os
+            # Try to get URL from environment variable first
+            env_url = os.getenv('BACKEND_URL')
+            if env_url:
+                self.base_url = env_url
+            else:
+                import subprocess
+                try:
+                    # Get IP address using ifconfig (macOS compatible)
+                    result = subprocess.run(['ifconfig'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        # Parse the output to find the first non-localhost IP
+                        for line in result.stdout.split('\n'):
+                            if 'inet ' in line and '127.0.0.1' not in line:
+                                local_ip = line.strip().split(' ')[1]
+                                self.base_url = f"http://{local_ip}:8000"
+                                break
+                        else:
+                            # Fallback to localhost if no IP found
+                            self.base_url = "http://localhost:8000"
+                    else:
+                        # Fallback to localhost if ifconfig fails
+                        self.base_url = "http://localhost:8000"
+                except Exception:
+                    # Fallback to localhost if any error occurs
+                    self.base_url = "http://localhost:8000"
+        else:
+            self.base_url = base_url
 
     def check_backend_health(self) -> bool:
         try:
