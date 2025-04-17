@@ -1,16 +1,14 @@
 #!/bin/bash
 
 # Create virtual environment if it doesn't exist
-if [ ! -d "backend_venv" ]; then
+if [ ! -d "frontend_venv" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv backend_venv
+    python3 -m venv frontend_venv
 fi
 
 # Activate virtual environment
 echo "Activating virtual environment..."
-source backend_venv/bin/activate
-
-cd backend
+source frontend_venv/bin/activate
 
 # Install requirements
 echo "Installing requirements..."
@@ -19,7 +17,7 @@ pip install -r requirements.txt
 # Get IP address for macOS
 IP_ADDRESS="152.67.255.214"
 
-# Run uvicorn
-echo "Starting uvicorn server..."
-echo "Backend will be available at: http://${IP_ADDRESS}:8000"
-uvicorn attention.api:app --reload --host 0.0.0.0 --port 8000 
+# Run streamlit
+echo "Starting Streamlit server..."
+echo "Frontend will be available at: http://${IP_ADDRESS}:8501"
+streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501 
