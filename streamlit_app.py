@@ -652,7 +652,6 @@ def main():
     if st.session_state.backend_available:
         st.text_input(
             "Input Text",
-            value=st.session_state.input_text,
             key="input_text"
         )
         
@@ -669,11 +668,9 @@ def main():
                     st.error(f"Error processing text: {str(e)}")
                 finally:
                     st.session_state.loading = False
-                    st.experimental_rerun()
     else:
         st.text_input(
             "Input Text",
-            value=st.session_state.input_text,
             key="input_text",
             disabled=True,
             help="Text input is disabled when using sample data. Please start the backend server to enable text processing."
