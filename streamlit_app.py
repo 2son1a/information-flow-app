@@ -536,7 +536,6 @@ def main():
                         color=None
                     )
                     st.session_state.head_groups.append(new_group_obj)
-                    st.experimental_rerun()
                 else:
                     st.error("Group name cannot be empty")
 
@@ -566,10 +565,8 @@ def main():
                     with group_col2:
                         if st.button("🎨", key=f"color_{group.id}", help="Change group color"):
                             group.color = get_random_color()
-                            st.experimental_rerun()
                         if st.button("×", key=f"remove_group_{group.id}", help="Remove group"):
                             st.session_state.head_groups = [g for g in st.session_state.head_groups if g.id != group.id]
-                            st.experimental_rerun()
 
         with col2:
             st.subheader("Individual Heads")            
@@ -625,7 +622,6 @@ def main():
                     
                     # Clear the input field after successful addition
                     st.session_state.head_input_value = ""
-                    st.experimental_rerun()
                 except ValueError as e:
                     st.error(f"Invalid input format. Please use numbers or ':' for wildcards (e.g., '1,2' or '1,:')")
                 except Exception as e:
@@ -656,13 +652,11 @@ def main():
                     with col2:
                         if st.button("🎨", key=f"color_head_{head.layer}_{head.head}", help="Change head color"):
                             head.color = get_random_color()
-                            st.experimental_rerun()
 
                     with col3:
                         if st.button("×", key=f"remove_{head.layer}_{head.head}", help="Remove head"):
                             st.session_state.selected_heads = [h for h in st.session_state.selected_heads 
                                                              if not (h.layer == head.layer and h.head == head.head)]
-                            st.experimental_rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)  # Close controls container
 
