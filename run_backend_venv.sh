@@ -1,5 +1,7 @@
 #!/bin/bash
 
+IP_ADDRESS=$1
+
 # Create virtual environment if it doesn't exist
 if [ ! -d "backend_venv" ]; then
     echo "Creating virtual environment..."
@@ -16,10 +18,7 @@ cd backend
 echo "Installing requirements..."
 pip install -r requirements.txt
 
-# Get IP address for macOS
-IP_ADDRESS="152.67.255.214"
-
 # Run uvicorn
 echo "Starting uvicorn server..."
 echo "Backend will be available at: http://${IP_ADDRESS}:8000"
-uvicorn attention.api:app --reload --host 0.0.0.0 --port 8000 
+uvicorn attention.api:app --reload --host $IP_ADDRESS --port 8000 
