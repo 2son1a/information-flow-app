@@ -12,6 +12,7 @@ import os
 import plotly.graph_objects as go
 from config.model_groups import MODEL_SPECIFIC_GROUPS
 from config.model_defaults import MODEL_DEFAULTS
+from scipy import interpolate
 
 # Set up logging with a StringIO buffer to capture logs
 log_buffer = io.StringIO()
@@ -160,7 +161,7 @@ def create_attention_graph(
     selected_heads: List[HeadPair],
     head_groups: List[HeadGroup]
 ) -> None:
-    """Create graph visualization using Plotly."""
+    """Create graph visualization using D3.js."""
     logger.info(f"Creating graph with data: numLayers={data['numLayers']}, numTokens={data['numTokens']}, numPatterns={len(data['attentionPatterns'])}")
     logger.info(f"Selected heads: {[(h.layer, h.head) for h in selected_heads]}")
     logger.info(f"Head groups: {[(g.name, len(g.heads)) for g in head_groups]}")
@@ -175,154 +176,33 @@ def create_attention_graph(
         )
     ]
 
-    # Create the base figure with grid points
-    fig = go.Figure()
+    # Prepare data for D3 visualization
+    viz_data = {
+        'numLayers': data['numLayers'],
+        'numTokens': data['numTokens'],
+        'tokens': data.get('tokens', [f'T{i}' for i in range(data['numTokens'])]),
+        'attentionPatterns': filtered_patterns,
+        'curveType': st.session_state.curve_type
+    }
 
-    # Add grid points for each layer and token
-    for layer in range(data['numLayers']):
-        for token in range(data['numTokens']):
-            fig.add_trace(go.Scatter(
-                x=[token],
-                y=[layer],
-                mode='markers',
-                marker=dict(
-                    size=8,
-                    color='lightgrey',
-                ),
-                hoverinfo='none',
-                showlegend=False
-            ))
-
-    # Create a mapping of (layer, head) to group name
-    head_to_group = {}
-    for group in head_groups:
-        for head in group.heads:
-            head_to_group[(head.layer, head.head)] = group.name
-
-    # First add all group patterns
-    for group in head_groups:
-        group_patterns = [
-            pattern for pattern in filtered_patterns
-            if (pattern['sourceLayer'], pattern['head']) in head_to_group
-            and head_to_group[(pattern['sourceLayer'], pattern['head'])] == group.name
-        ]
-        
-        if group_patterns:
-            # Add a dummy trace for the group legend entry
-            fig.add_trace(go.Scatter(
-                x=[None],
-                y=[None],
-                mode='lines',
-                line=dict(
-                    color=group.color or COLOR_PALETTE[group.id % len(COLOR_PALETTE)],
-                    width=3
-                ),
-                name=group.name,
-                showlegend=True
-            ))
-            
-            # Add actual patterns for this group
-            for pattern in group_patterns:
-                x0, y0 = pattern['sourceToken'], pattern['sourceLayer']
-                x1, y1 = pattern['destToken'], pattern['destLayer']
-                
-                control_x = (x0 + x1) / 2
-                control_y = max(y0, y1) + 0.5
-                
-                t = np.linspace(0, 1, 20)
-                x = (1-t)**2 * x0 + 2*(1-t)*t * control_x + t**2 * x1
-                y = (1-t)**2 * y0 + 2*(1-t)*t * control_y + t**2 * y1
-                
-                fig.add_trace(go.Scatter(
-                    x=x,
-                    y=y,
-                    mode='lines',
-                    line=dict(
-                        color=group.color or COLOR_PALETTE[group.id % len(COLOR_PALETTE)],
-                        width=3
-                    ),
-                    hovertemplate=f'Layer: {pattern["sourceLayer"]}<br>Head: {pattern["head"]}<br>Weight: {pattern["weight"]:.3f}',
-                    name=group.name,
-                    showlegend=False
-                ))
-
-    # Then add individual head patterns, treating each head as its own group
-    for head in selected_heads:
-        head_patterns = [
-            pattern for pattern in filtered_patterns
-            if pattern['sourceLayer'] == head.layer and pattern['head'] == head.head
-        ]
-        
-        if head_patterns:
-            # Add a dummy trace for the head legend entry
-            fig.add_trace(go.Scatter(
-                x=[None],
-                y=[None],
-                mode='lines',
-                line=dict(
-                    color=head.color or '#3B82F6',
-                    width=3
-                ),
-                name=f"Head {head.layer},{head.head}",
-                showlegend=True
-            ))
-            
-            # Add actual patterns for this head
-            for pattern in head_patterns:
-                x0, y0 = pattern['sourceToken'], pattern['sourceLayer']
-                x1, y1 = pattern['destToken'], pattern['destLayer']
-                
-                control_x = (x0 + x1) / 2
-                control_y = max(y0, y1) + 0.5
-                
-                t = np.linspace(0, 1, 20)
-                x = (1-t)**2 * x0 + 2*(1-t)*t * control_x + t**2 * x1
-                y = (1-t)**2 * y0 + 2*(1-t)*t * control_y + t**2 * y1
-                
-                fig.add_trace(go.Scatter(
-                    x=x,
-                    y=y,
-                    mode='lines',
-                    line=dict(
-                        color=head.color or '#3B82F6',
-                        width=3
-                    ),
-                    hovertemplate=f'Layer: {pattern["sourceLayer"]}<br>Head: {pattern["head"]}<br>Weight: {pattern["weight"]:.3f}',
-                    name=f"Head {head.layer},{head.head}",
-                    showlegend=False
-                ))
-
-    # Update layout
-    tokens = data.get('tokens', [f'T{i}' for i in range(data['numTokens'])])
-    fig.update_layout(
-        plot_bgcolor='white',
-        width=1000,
-        height=700,
-        xaxis=dict(
-            title='Token',
-            ticktext=tokens,
-            tickvals=list(range(len(tokens))),
-            showgrid=False,
-            zeroline=False
-        ),
-        yaxis=dict(
-            title='Layer',
-            showgrid=False,
-            zeroline=False,
-            range=[0, data['numLayers']]
-        ),
-        margin=dict(l=50, r=50, t=30, b=50),
-        showlegend=True,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="right",
-            x=0.99
-        )
-    )
-
-    # Display the plot in Streamlit
-    st.plotly_chart(fig, use_container_width=True)
+    # Create HTML container for D3 visualization
+    html = f"""
+    <iframe id="d3-viz" src="/visualization.html" width="100%" height="800" style="border:none;"></iframe>
+    <script>
+        window.addEventListener('load', function() {{
+            const iframe = document.getElementById('d3-viz');
+            iframe.onload = function() {{
+                iframe.contentWindow.postMessage({{
+                    type: 'updateData',
+                    data: {json.dumps(viz_data)}
+                }}, '*');
+            }};
+        }});
+    </script>
+    """
+    
+    # Display the visualization
+    st.components.v1.html(html, height=800)
 
 def convert_predefined_groups_to_head_groups(model: str) -> List[HeadGroup]:
     """Convert predefined groups from MODEL_SPECIFIC_GROUPS to HeadGroup objects."""
@@ -381,6 +261,8 @@ def main():
         st.session_state.loading = False
     if 'color_change_group' not in st.session_state:
         st.session_state.color_change_group = None
+    if 'curve_type' not in st.session_state:
+        st.session_state.curve_type = "cubic"
 
     # Custom CSS
     st.markdown("""
@@ -533,7 +415,7 @@ def main():
                         id=len(st.session_state.head_groups),
                         name=new_group,
                         heads=[],
-                        color=None
+                        color=get_random_color()
                     )
                     st.session_state.head_groups.append(new_group_obj)
                 else:
@@ -594,21 +476,21 @@ def main():
                     if layer_str == ':' and head_str == ':':
                         for l in range(st.session_state.attention_data['numLayers']):
                             for h in range(st.session_state.attention_data['numHeads']):
-                                st.session_state.selected_heads.append(HeadPair(layer=l, head=h, color=COLOR_PALETTE[len(st.session_state.selected_heads) % len(COLOR_PALETTE)]))
+                                st.session_state.selected_heads.append(HeadPair(layer=l, head=h, color="#e5e7eb"))
                     elif layer_str == ':':
                         head = int(head_str)
                         if not 0 <= head < st.session_state.attention_data['numHeads']:
                             st.error(f"Invalid head number. Must be between 0 and {st.session_state.attention_data['numHeads']-1}")
                             return
                         for l in range(st.session_state.attention_data['numLayers']):
-                            st.session_state.selected_heads.append(HeadPair(layer=l, head=head, color=COLOR_PALETTE[len(st.session_state.selected_heads) % len(COLOR_PALETTE)]))
+                            st.session_state.selected_heads.append(HeadPair(layer=l, head=head, color="#e5e7eb"))
                     elif head_str == ':':
                         layer = int(layer_str)
                         if not 0 <= layer < st.session_state.attention_data['numLayers']:
                             st.error(f"Invalid layer number. Must be between 0 and {st.session_state.attention_data['numLayers']-1}")
                             return
                         for h in range(st.session_state.attention_data['numHeads']):
-                            st.session_state.selected_heads.append(HeadPair(layer=layer, head=h, color=COLOR_PALETTE[len(st.session_state.selected_heads) % len(COLOR_PALETTE)]))
+                            st.session_state.selected_heads.append(HeadPair(layer=layer, head=h, color="#e5e7eb"))
                     else:
                         layer = int(layer_str)
                         head = int(head_str)
@@ -618,7 +500,7 @@ def main():
                         if not 0 <= head < st.session_state.attention_data['numHeads']:
                             st.error(f"Invalid head number. Must be between 0 and {st.session_state.attention_data['numHeads']-1}")
                             return
-                        st.session_state.selected_heads.append(HeadPair(layer=layer, head=head, color=COLOR_PALETTE[len(st.session_state.selected_heads) % len(COLOR_PALETTE)]))
+                        st.session_state.selected_heads.append(HeadPair(layer=layer, head=head, color="#e5e7eb"))
                     
                     # Clear the input field after successful addition
                     st.session_state.head_input_value = ""
@@ -669,6 +551,27 @@ def main():
         value=st.session_state.threshold,
         step=0.01
     )
+    
+    # Add curve type selector
+    curve_types = {
+        "Cubic Bezier": "cubic",
+        "Quadratic Bezier": "quadratic",
+        "Linear": "linear",
+        "Spline": "spline"
+    }
+    
+    # Create reverse mapping from internal values to display names
+    curve_type_to_display = {v: k for k, v in curve_types.items()}
+    
+    # Get the current display name using the reverse mapping
+    current_display = curve_type_to_display.get(st.session_state.curve_type, "Cubic Bezier")
+    
+    selected_display = st.selectbox(
+        "Curve Type",
+        options=list(curve_types.keys()),
+        index=list(curve_types.keys()).index(current_display)
+    )
+    st.session_state.curve_type = curve_types[selected_display]
     st.markdown("</div>", unsafe_allow_html=True)
 
     # Text input and processing
