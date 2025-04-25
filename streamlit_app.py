@@ -180,24 +180,386 @@ def create_attention_graph(
     viz_data = {
         'numLayers': data['numLayers'],
         'numTokens': data['numTokens'],
+        'numHeads': data['numHeads'],
         'tokens': data.get('tokens', [f'T{i}' for i in range(data['numTokens'])]),
         'attentionPatterns': filtered_patterns,
-        'curveType': st.session_state.curve_type
+        'headGroups': [
+            {
+                'id': group.id,
+                'name': group.name,
+                'description': group.description,
+                'color': group.color,
+                'heads': [{'layer': h.layer, 'head': h.head} for h in group.heads]
+            }
+            for group in head_groups
+        ],
+        'selectedHeads': [{'layer': h.layer, 'head': h.head} for h in selected_heads]
     }
 
-    # Create HTML container for D3 visualization
+    # Create HTML with embedded D3.js visualization
     html = f"""
-    <iframe id="d3-viz" src="/visualization.html" width="100%" height="800" style="border:none;"></iframe>
+    <div id="visualization-container" style="width: 100%; height: 800px;"></div>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        .attention-line {{
+            stroke-opacity: 0.6;
+            stroke-width: 4;
+            cursor: pointer;
+        }}
+        .attention-line:hover {{
+            stroke-opacity: 0.9;
+            stroke-width: 6;
+        }}
+        .grid-point {{
+            fill: #e5e7eb;
+            cursor: pointer;
+        }}
+        .grid-point:hover {{
+            fill: #d1d5db;
+            r: 8;
+        }}
+        .hover-target {{
+            fill: transparent;
+            cursor: pointer;
+        }}
+        #graph-tooltip {{
+            display: none;
+            position: absolute;
+            background: white;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+        }}
+    </style>
     <script>
-        window.addEventListener('load', function() {{
-            const iframe = document.getElementById('d3-viz');
-            iframe.onload = function() {{
-                iframe.contentWindow.postMessage({{
-                    type: 'updateData',
-                    data: {json.dumps(viz_data)}
-                }}, '*');
-            }};
-        }});
+        // Color palette for individual heads
+        const colorPalette = [
+            "#38B2AC", "#9F7AEA", "#F6AD55", "#68D391", "#F687B3",
+            "#4FD1C5", "#B794F4", "#7F9CF5", "#C6F6D5", "#FBD38D",
+            "#76E4F7", "#E9D8FD", "#90CDF4", "#FEB2B2", "#81E6D9",
+            "#D6BCFA", "#FBB6CE", "#B2F5EA", "#667EEA", "#ED64A6"
+        ];
+
+        // Graph dimensions
+        const graphDimensions = {{
+            width: 1000,
+            height: 700,
+            padding: {{ top: 40, right: 180, bottom: 60, left: 60 }}
+        }};
+
+        // Data from Streamlit
+        const data = {json.dumps(viz_data)};
+        let headGroups = data.headGroups || [];
+        let selectedHeads = data.selectedHeads || [];
+
+        // Function to get visible heads
+        function getVisibleHeads() {{
+            return [...selectedHeads, ...headGroups.flatMap(g => g.heads)];
+        }}
+
+        // Function to get head group
+        function getHeadGroup(layer, head) {{
+            for (const group of headGroups) {{
+                if (group.heads.some(h => h.layer === layer && h.head === head)) {{
+                    return group.id;
+                }}
+            }}
+            return -1;
+        }}
+
+        // Function to get group color
+        function getGroupColor(groupId) {{
+            const group = headGroups.find(g => g.id === groupId);
+            return group?.color || colorPalette[groupId % colorPalette.length];
+        }}
+
+        // Main drawing function
+        function drawGraph() {{
+            const svg = d3.select("#visualization-container")
+                .append("svg")
+                .attr("width", graphDimensions.width)
+                .attr("height", graphDimensions.height);
+
+            const width = graphDimensions.width;
+            const height = graphDimensions.height;
+            const padding = graphDimensions.padding;
+            const legendWidth = padding.right;
+            const graphWidth = width - padding.left - padding.right;
+            const graphHeight = height - padding.top - padding.bottom;
+            const tokenWidth = graphWidth / data.numTokens;
+            const layerHeight = graphHeight / (data.numLayers - 1);
+
+            // Create nodes
+            const nodes = [];
+            for (let l = 0; l < data.numLayers; l++) {{
+                for (let t = 0; t < data.numTokens; t++) {{
+                    nodes.push({{
+                        id: `${{l}}-${{t}}`,
+                        layer: l,
+                        token: t,
+                        x: padding.left + t * tokenWidth + tokenWidth / 2,
+                        y: height - (padding.bottom + l * layerHeight)
+                    }});
+                }}
+            }}
+
+            // Create color scales
+            const individualHeadColorScale = d3.scaleOrdinal(colorPalette)
+                .domain(Array.from({{ length: data.numHeads }}, (_, i) => i.toString()));
+
+            // Filter edges
+            const visibleHeadPairs = getVisibleHeads();
+            const links = data.attentionPatterns
+                .filter(edge => {{
+                    const isVisible = visibleHeadPairs.some(h =>
+                        h.layer === edge.sourceLayer && h.head === edge.head
+                    );
+                    return edge.weight >= {threshold} && isVisible;
+                }})
+                .map(edge => ({{
+                    source: `${{edge.sourceLayer}}-${{edge.sourceToken}}`,
+                    target: `${{edge.destLayer}}-${{edge.destToken}}`,
+                    weight: edge.weight,
+                    head: edge.head,
+                    groupId: getHeadGroup(edge.sourceLayer, edge.head) ?? -1
+                }}));
+
+            // Draw layers and tokens labels
+            const g = svg.append("g");
+
+            // Layer labels
+            for (let l = 0; l < data.numLayers; l++) {{
+                g.append("text")
+                    .attr("x", padding.left / 2 + 25)
+                    .attr("y", height - (padding.bottom + l * layerHeight))
+                    .attr("text-anchor", "middle")
+                    .attr("dominant-baseline", "middle")
+                    .text(l.toString());
+            }}
+
+            // Y-axis label
+            g.append("text")
+                .attr("x", padding.left / 2)
+                .attr("y", height / 2)
+                .attr("text-anchor", "middle")
+                .attr("dominant-baseline", "middle")
+                .attr("font-size", "14px")
+                .attr("font-weight", "medium")
+                .text("Layer");
+
+            // Token labels
+            for (let t = 0; t < data.numTokens; t++) {{
+                g.append("text")
+                    .attr("x", padding.left + t * tokenWidth + tokenWidth / 2)
+                    .attr("y", height - padding.bottom / 2)
+                    .attr("text-anchor", "middle")
+                    .attr("dominant-baseline", "middle")
+                    .text(data.tokens?.[t] || `T${{t}}`);
+            }}
+
+            // X-axis label
+            g.append("text")
+                .attr("x", width / 2)
+                .attr("y", height - padding.bottom / 4)
+                .attr("text-anchor", "middle")
+                .attr("dominant-baseline", "middle")
+                .attr("font-size", "14px")
+                .attr("font-weight", "medium")
+                .text("Token");
+
+            // Draw edges with curved paths
+            const linkElements = g.selectAll("path")
+                .data(links)
+                .enter()
+                .append("path")
+                .attr("d", d => {{
+                    const source = nodes.find(n => n.id === d.source);
+                    const target = nodes.find(n => n.id === d.target);
+                    const dx = target.x - source.x;
+                    const controlPoint1x = source.x + dx * 0.5;
+                    const controlPoint1y = source.y;
+                    const controlPoint2x = target.x - dx * 0.5;
+                    const controlPoint2y = target.y;
+                    return `M ${{source.x}} ${{source.y}} C ${{controlPoint1x}} ${{controlPoint1y}}, ${{controlPoint2x}} ${{controlPoint2y}}, ${{target.x}} ${{target.y}}`;
+                }})
+                .attr("fill", "none")
+                .attr("stroke", d => {{
+                    if (d.groupId >= 0) {{
+                        return getGroupColor(d.groupId);
+                    }}
+                    return individualHeadColorScale(d.head.toString());
+                }})
+                .attr("stroke-width", 4)
+                .attr("opacity", 0.6)
+                .attr("class", "attention-line")
+                .on("mouseover", function(event, d) {{
+                    d3.select(this)
+                        .attr("opacity", 1)
+                        .attr("stroke-width", 6);
+                    const tooltip = d3.select("#graph-tooltip");
+                    const group = headGroups.find(g => g.id === d.groupId);
+                    tooltip.style("display", "block")
+                        .html(`Head: Layer ${{d.source.split("-")[0]}}, Head ${{d.head}}<br>
+                               Weight: ${{d.weight.toFixed(4)}}${{group ?
+                               `<br>Group: ${{group.name}}${{group.description ?
+                               `<br><span style="font-style: italic; font-size: 11px;">${{group.description}}</span>` : ''}}` :
+                               '<br>Individual Head'}}`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                }})
+                .on("mouseout", function() {{
+                    d3.select(this)
+                        .attr("opacity", 0.6)
+                        .attr("stroke-width", 4);
+                    d3.select("#graph-tooltip").style("display", "none");
+                }});
+
+            // Draw nodes
+            const nodeElements = g.selectAll("circle")
+                .data(nodes)
+                .enter()
+                .append("circle")
+                .attr("class", "grid-point")
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y)
+                .attr("r", 6)
+                .attr("fill", "#e5e7eb")
+                .on("mouseover", function(event, d) {{
+                    d3.select(this)
+                        .attr("r", 8)
+                        .attr("fill", "#d1d5db");
+                    const tooltip = d3.select("#graph-tooltip");
+                    tooltip.style("display", "block")
+                        .html(`Layer ${{d.layer}}, Token ${{d.token}}`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                }})
+                .on("mouseout", function() {{
+                    d3.select(this)
+                        .attr("r", 6)
+                        .attr("fill", "#e5e7eb");
+                    d3.select("#graph-tooltip").style("display", "none");
+                }});
+
+            // Add invisible hover targets for easier interaction
+            g.selectAll("circle.hover-target")
+                .data(nodes)
+                .enter()
+                .append("circle")
+                .attr("class", "hover-target")
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y)
+                .attr("r", 12)
+                .attr("fill", "transparent")
+                .on("mouseover", function(event, d) {{
+                    const tooltip = d3.select("#graph-tooltip");
+                    tooltip.style("display", "block")
+                        .html(`Layer ${{d.layer}}, Token ${{d.token}}`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                    d3.select(this.parentNode)
+                        .select(`circle:not(.hover-target)[data-node-id="${{d.id}}"]`)
+                        .attr("r", 8)
+                        .attr("fill", "#d1d5db");
+                }})
+                .on("mouseout", function(event, d) {{
+                    d3.select("#graph-tooltip").style("display", "none");
+                    d3.select(this.parentNode)
+                        .select(`circle:not(.hover-target)[data-node-id="${{d.id}}"]`)
+                        .attr("r", 6)
+                        .attr("fill", "#e5e7eb");
+                }});
+
+            // Draw legend
+            const legend = g.append("g")
+                .attr("transform", `translate(${{width - legendWidth + 20}}, ${{padding.top}})`);
+
+            // Add legend title
+            legend.append("text")
+                .attr("x", 0)
+                .attr("y", 0)
+                .attr("font-size", "14px")
+                .attr("font-weight", "bold")
+                .text("Legend");
+
+            // Add group colors to legend
+            headGroups.forEach((group, i) => {{
+                const y = 30 + i * 25;
+                legend.append("rect")
+                    .attr("x", 0)
+                    .attr("y", y)
+                    .attr("width", 15)
+                    .attr("height", 15)
+                    .attr("fill", getGroupColor(group.id));
+                const groupText = legend.append("text")
+                    .attr("x", 25)
+                    .attr("y", y + 12)
+                    .attr("font-size", "12px")
+                    .text(group.name);
+                if (group.description) {{
+                    groupText
+                        .on("mouseenter", function(event) {{
+                            const tooltip = d3.select("#graph-tooltip");
+                            tooltip.style("display", "block")
+                                .html(`<strong>${{group.name}}</strong><br>${{group.description}}`)
+                                .style("left", (event.pageX + 10) + "px")
+                                .style("top", (event.pageY - 10) + "px");
+                        }})
+                        .on("mouseleave", function() {{
+                            d3.select("#graph-tooltip").style("display", "none");
+                        }});
+                }}
+            }});
+
+            // Add separator
+            const separatorY = 30 + headGroups.length * 25 + 10;
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", legendWidth - padding.left)
+                .attr("y1", separatorY)
+                .attr("y2", separatorY)
+                .attr("stroke", "#e5e7eb")
+                .attr("stroke-width", 2);
+
+            // Add individual heads section
+            legend.append("text")
+                .attr("x", 0)
+                .attr("y", separatorY + 25)
+                .attr("font-size", "12px")
+                .attr("font-weight", "bold")
+                .text("Individual Heads");
+
+            // Add individual head colors to legend
+            const visibleIndividualHeads = selectedHeads.filter(h =>
+                !headGroups.some(g => g.heads.some(gh => gh.layer === h.layer && gh.head === h.head))
+            );
+
+            visibleIndividualHeads.forEach((head, i) => {{
+                const y = separatorY + 40 + i * 25;
+                legend.append("rect")
+                    .attr("x", 0)
+                    .attr("y", y)
+                    .attr("width", 15)
+                    .attr("height", 15)
+                    .attr("fill", individualHeadColorScale(head.head.toString()));
+                legend.append("text")
+                    .attr("x", 25)
+                    .attr("y", y + 12)
+                    .attr("font-size", "12px")
+                    .text(`Layer ${{head.layer}}, Head ${{head.head}}`);
+            }});
+        }}
+
+        // Add tooltip div
+        const tooltip = document.createElement("div");
+        tooltip.id = "graph-tooltip";
+        document.body.appendChild(tooltip);
+
+        // Draw the graph
+        drawGraph();
     </script>
     """
     
